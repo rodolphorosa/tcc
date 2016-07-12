@@ -6,8 +6,6 @@ import json
 import sys 
 import os.path 
 
-from pprint import pprint 
-from random import shuffle 
 from multiprocessing import cpu_count 
 from sklearn.linear_model import SGDClassifier 
 from sklearn.utils.class_weight import compute_class_weight 
@@ -17,20 +15,26 @@ from sklearn.metrics import accuracy_score
 from scipy.sparse import csr_matrix, lil_matrix 
 
 # Mapeia os indices das categorias para valores inteiros 
-def mapear_classes (ofertas):
-	categorias = {} 
-	_id = 0 
-
-	for oferta in ofertas: 
-		categoria, oferta = oferta.split("\t") 
-		if not categoria in categorias.keys(): 
-			categorias[categoria] = _id 
-			_id += 1 
-
-	# Gera um arquivo json contendo as classes presentes no dataset 
+def mapear_classes (ofertas): 
 	caminho_das_clases = "../dataset/classes.json" 
-	with open(caminho_das_clases, 'w') as jf: 
-		json.dump(categorias, jf) 
+	categorias = {} 
+
+	# Se o mapa nao existir, cria o mapa e o salva em um arquivo json 
+	if not os.path.exists(caminho_das_clases): 	
+		_id = 0 
+
+		for oferta in ofertas: 
+			categoria, oferta = oferta.split("\t") 
+			if not categoria in categorias.keys(): 
+				categorias[categoria] = _id 
+				_id += 1 
+
+		with open(caminho_das_clases, 'w') as jf: 
+			json.dump(categorias, jf) 
+	# Caso contrario, carrega o mapa a partir de um arquivo  
+	else:
+		with open(caminho_das_clases) as jf: 
+			categorias = json.load(jf) 
 
 	return categorias 
 
@@ -81,11 +85,13 @@ def criar_dataset (ofertas, indices):
 	linha = 0 
 	for oferta in ofertas: 
 		# A cada dez mil ofertas lidas, exibe o passo na saida 
-		if linha % 10000 == 0: print ("Process at sentence %d" %linha) 
+		if linha % 10000 == 0: print ("Process at sentence #%d" %linha) 
 		tokens = oferta.split() 
-		classe = classes[tokens[0]] 
-		matriz[linha, 0] = classe 
-		y[linha] = classe 
+		try:
+			classe = classes[tokens[0]] 
+			y[linha] = classe 
+		except: 
+			pass 
 		for palavra in tokens[1:]: 
 			try: 
 				coluna = indices[palavra] 
@@ -96,12 +102,12 @@ def criar_dataset (ofertas, indices):
 	
 	return (y, matriz, indice_invertido) 
 
-# Retorna um classificador a partir de um conjunto de dados de entrada 
-# Divide de forma aleatoria o conjunto em dois (treino e teste) 
-# a partir de uma porcentagem dada como parametro de entrada 
-# Testa o classificador e retorna a acuracia media 
+# Retorna um classificador treinado a partir de um conjunto de dados de entrada 
 def treinar_porcentagem(porcentagem=0.9): 
 	ofertas = dados_de_entrada.readlines() 
+
+	print("Running classifier with %d sentences" %len(ofertas)) 
+	print("Training with %d%% of the data" %int(porcentagem*100)) 
 
 	bloco_de_treino = int(len(ofertas) * porcentagem) 
 
@@ -121,12 +127,31 @@ def treinar_porcentagem(porcentagem=0.9):
 	print("Executing prediction... ") 
 	y_predict = classificador.predict(X_teste) 
 
-	print("Calculation accurary... ") 
+	print("Calculating accurary... ") 
 	acuracia = accuracy_score(y_teste, y_predict) 
 
 	print("Mean accuracy: ", acuracia) 
 
 	return classificador 
+
+# Testa o classificador a partir de um conjunto de testes 
+def testar(): 
+	with open("../dataset/vocabulario.json") as jf: 
+		vocabulario = json.load(jf) 
+
+	with open("../dataset/indices.json") as jf: 
+		indices = json.load(jf) 
+
+	ofertas = dados_de_entrada.readlines() 
+	print("Executing test with %d sentences" %len(ofertas)) 
+
+	print("Generating bow matrix... ") 
+	y, X, indice_invertido = criar_dataset(ofertas, indices) 
+
+	print("Executing prediction... ") 
+	y_test = classificador.predict(X) 
+
+	return accuracy_score(y, y_test) 
 
 if __name__ == "__main__": 
 
