@@ -17,14 +17,15 @@ from sklearn.linear_model import SGDClassifier
 from sklearn.utils.class_weight import compute_class_weight 
 from sklearn.cross_validation import train_test_split, StratifiedShuffleSplit 
 from sklearn.externals import joblib 
-from sklearn.metrics import accuracy_score, confusion_matrix 
+from sklearn.metrics import accuracy_score, f1_score, confusion_matrix 
 from scipy.sparse import csr_matrix, lil_matrix 
+from process_features import gerar_features 
 
 """
 @brief Mapeia categorias a partir de um conjunto de dados 
 
 Dado com conjunto de dados de entrada, realiza o mapeamento 
-dos índices das categorias para valores inteiros variando entre 0 e n, 
+dos índices das categorias para valores inteiros variando entre 0 e n-1, 
 onde 'n' é o número de categorias distintas do dataset. 
 
 Após o mapeamento, o dicionário gerado é salvo em um arquivo json. 
@@ -75,11 +76,22 @@ def gerar_vocabulario (ofertas):
 	
 	if not os.path.exists(caminho_do_vocabulario): 
 		dicionario = {} 
+		idx = 0
 		for oferta in ofertas: 
-			for palavra in oferta.split()[1:]: 
+			if idx % 10000 == 0: print("Process at sentence %d\n" %idx) 
+
+			desc, cat_loja, preco, nome_loja = oferta.strip().split('\t')[2:] 
+			
+			features = gerar_features(descricao=desc, bigramas=True, primeiro_token=True, categoria_loja=cat_loja, preco=preco, nome_loja=nome_loja) 
+
+			palavras = features.strip().split() 
+			
+			for palavra in palavras: 
 				dicionario[palavra] = 1 
 
-		idx = 0
+			idx+=1
+
+		idx = 0 
 		vocabulario = {} 
 		for palavra in dicionario.keys(): 
 			vocabulario[palavra] = idx 
@@ -111,7 +123,7 @@ N é o tamanho do dataset e V é o tamanho do vocabulário.
 def criar_dataset (ofertas, classes, vocabulario): 
 	indice_invertido = {} 
 
-	X = lil_matrix((len(ofertas), len(vocabulario))) 
+	X = lil_matrix((len(ofertas), len(vocabulario)), dtype="int") 
 	y = np.zeros(len(ofertas)) 
 
 	for classe in classes: 
@@ -123,14 +135,21 @@ def criar_dataset (ofertas, classes, vocabulario):
 
 	linha = 0 
 	for oferta in ofertas: 
-		if linha % 10000 == 0: print ("Process at sentence #%d" %linha) 
-		tokens = oferta.split() 
+		# if linha % 10000 == 0: print ("Process at sentence #%d" %linha)
+		campos = oferta.strip().split('\t') 
 		try:
-			classe = classes[tokens[0]] 
+			classe = classes[campos[0]] 
 			y[linha] = classe 
 		except: 
-			pass 
-		for palavra in tokens[1:]: 
+			pass 		
+		
+		features = gerar_features(descricao=campos[2], primeiro_token=True) 
+		
+		features = gerar_features(descricao=campos[2], bigramas=True, primeiro_token=True, categoria_loja=campos[3], preco=campos[4], nome_loja=campos[5]) 
+		
+		tokens = features.strip().split() 
+		
+		for palavra in tokens: 
 			try: 
 				coluna = vocabulario[palavra] 
 				X[linha, coluna] = 1 
@@ -182,14 +201,9 @@ def plotar_matriz_confusao (cm, title="Matriz de confusão", cmap=plt.cm.jet):
 @param tamaho_teste Tamanho do conjunto de teste 
 @param acuracia Acurácia média do treino 
 """
-def escrever_estatisticas (treino, teste, tamanho_treino, tamanho_teste, acuracia): 
+def escrever_estatisticas (acuracia, macro): 
 	with open(stats, 'a') as estatisticas: 
-		estatisticas.write("\n\n ***BAG OF WORDS*** \n\n") 
-		estatisticas.write("@Conjunto de treino: '%s'\n" %treino) 
-		estatisticas.write("@Conjunto de teste: '%s'\n" %teste) 
-		estatisticas.write("@Tamanho do conjunto de treinamento: %d\n" %tamanho_treino) 
-		estatisticas.write("@Tamanho do conjunto de teste: %d\n" %tamanho_teste) 
-		estatisticas.write("@Acurácia média %.2f\n" %(acuracia*100)) 
+		estatisticas.write("%.2f\t%.2f\n" %(acuracia*100, macro*100)) 
 
 """
 @brief Executa o treino do classificador 
@@ -203,10 +217,12 @@ e é exibido o gráfico da matriz de confusão e o cálculo da acurácia média.
 @return classificador Classificador SGD treinado
 """
 def treinar_classificador (): 
-	with open(treino, 'r', encoding="utf-8") as a: 
+	classificador = SGDClassifier(loss="modified_huber") 
+
+	with open(treino, 'r', encoding='utf-8') as a: 
 		ofertas_treino = a.readlines() 
 
-	with open(teste, 'r', encoding="utf-8") as a: 
+	with open(teste, 'r', encoding='utf-8') as a: 
 		ofertas_teste = a.readlines() 
 
 	bloco_treino = len(ofertas_treino) 
@@ -219,14 +235,25 @@ def treinar_classificador ():
 
 	print("Generating class map... ") 
 	classes = mapear_classes(ofertas_treino + ofertas_teste) 
-	
-	print("Generating bow matrix for training set... ") 
-	X_treino, y_treino, indice_invertido = criar_dataset(ofertas_treino, classes, vocabulario) 
 
-	classificador = SGDClassifier(loss="modified_huber") 
+	cs = np.unique(list(classes.values())) 
 
-	print("Training classifier with %d sentences" %bloco_treino) 
-	classificador = classificador.fit(X_treino, y_treino) 
+	batch = bloco_treino//1000 
+
+	if batch == 0: 	
+		print("Generating bow matrix for training set... ") 
+		X_treino, y_treino, indice_invertido = criar_dataset(ofertas_treino, classes, vocabulario) 
+
+		print("Training classifier with %d sentences" %bloco_treino) 
+		classificador = classificador.fit(X_treino, y_treino) 
+	else: 
+		print("Training classifier with %d sentences" %bloco_treino) 
+		for i in range(1000): 
+			print ("Train at sentence #%d" %(i*batch)) 
+			k1, k2 = batch * i, batch * (i+1) 
+			if k2-k1 > 1:
+				X_treino, y_treino, indice_invertido = criar_dataset(ofertas_treino[k1:k2], classes, vocabulario) 
+				classificador = classificador.partial_fit(X_treino, y_treino, cs) 
 
 	print("Finished training") 
 
@@ -242,13 +269,12 @@ def treinar_classificador ():
 
 	print("Calculating accurary... ") 
 	acuracia = accuracy_score(y_teste, y_predict) 
-
-	print("Mean accuracy: %.2f" %(acuracia*100)) 
+	f1_macro = f1_score(y_teste, y_predict, average="macro") 
 
 	matriz_de_confusao = obter_matriz_confusao(y_teste, y_predict) 
-	plotar_matriz_confusao(matriz_de_confusao) 
+	# plotar_matriz_confusao(matriz_de_confusao) 
 
-	escrever_estatisticas(treino, teste, bloco_treino, bloco_teste, acuracia) 
+	escrever_estatisticas(acuracia, f1_macro) 
 
 	return classificador 
 
@@ -283,8 +309,9 @@ def testar_classificador():
 	plotar_matriz_confusao(matriz_de_confusao) 
 
 	acuracia = accuracy_score(y, y_pred) 
+	f1_macro = f1_score(y_teste, y_pred, average="macro") 
 
-	escrever_estatisticas(treino, teste, 0, len(ofertas), acuracia) 
+	escrever_estatisticas(acuracia, f1_macro) 
 
 	return acuracia 
 
@@ -297,7 +324,7 @@ if __name__ == "__main__":
 		sys.exit(1) 
 	treino, teste, caminho_do_classificador = sys.argv[1:4] 
 
-	stats = "../stats/statistics.txt" 
+	stats = "../stats/stats_bow.txt" 
 	graph = "../graphics/" 
 
 	if not os.path.exists(caminho_do_classificador): 
