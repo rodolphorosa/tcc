@@ -83,17 +83,16 @@ def calcular_teto (ofertas, modelo):
 	return teto 
 
 """
-@brief Constrói a matriz bag of words 
+@brief Constrói a matriz word embedding
 
-Dado um conjunto de dados e um vocabulário, 
-gera uma matriz esparsa bag of words binária de dimensão NxV onde 
-N é o tamanho do dataset e V é o tamanho do vocabulário.  
+Dado um conjunto de dados e um mapa de classes, 
+gera uma matriz word embedding a partir do modelo word2vec previamente treinado. 
 
 @param ofertas Conjunto de dados 
 @param classes Conjunto de classes (previamente) mapeadas 
-@param vocabulario Vocabulário 
+@param usar_teto Determina se o número de palavras utilizadas por oferta será o dado de entrada ou o número de palavras da maior oferta 
 
-@return X Matriz bag of words binária 
+@return X Matriz word embedding 
 @return y Vetor de classes 
 @return indice_invertido Índice invertido indicando o id da categoria dada uma classe mapeada 
 """
@@ -168,20 +167,18 @@ def plotar_matriz_confusao (cm, title="Matriz de confusão", cmap=plt.cm.jet):
 	plt.ylabel('Gabarito') 
 	plt.xlabel('Predito') 
 	plt.gcf().subplots_adjust(bottom=0.15) 
-	plt.savefig(graph + "matriz_de_confusao.png") 
+	fig_name = "matriz_de_confusao_%d_%d.png" % (features, n_palavras)
+	plt.savefig(graph + fig_name) 
 
 """
 @brief Escreve estatísticas da execução 
 
-@param treino Arquivo de treino 
-@param teste Arquivo de teste
-@param tamanho_treino Tamanho do conjunto de treino 
-@param tamaho_teste Tamanho do conjunto de teste 
 @param acuracia Acurácia média do treino 
+@param f1_macro F1 Score usando parâmetro 'average' macro 
 """
-def escrever_estatisticas (acuracia, f1_micro, f1_macro): 
+def escrever_estatisticas (acuracia, f1_macro): 
 	with open(stats, 'a') as estatisticas: 
-		estatisticas.write("%d %.2f %.2f %.2f\n" %(features, (acuracia*100), (f1_micro*100), (f1_macro*100))) 
+		estatisticas.write("%d %.2f %.2f\n" %(features, (acuracia*100), (f1_macro*100))) 
 
 """
 @brief Executa o treino do classificador 
@@ -189,8 +186,7 @@ def escrever_estatisticas (acuracia, f1_micro, f1_macro):
 A partir de um conjunto de dados, executa o treinamento 
 de um classificador SGD (Stochatic Gradient Descent). 
 
-Após o treinamento, é feita uma predição sobre um conjunto de teste
-e é exibido o gráfico da matriz de confusão e o cálculo da acurácia média. 
+A partir do tamanho do conjunto de treino/teste, verifica se o treino/teste será com todo o conjunto ou parcialmente. 
 
 @return classificador Classificador SGD treinado
 """
@@ -217,7 +213,7 @@ def treinar_classificador ():
 	batch = bloco_treino//1000 
 
 	if batch == 0: 	
-		print("Generating bow matrix for training set... ") 
+		print("Generating w2v matrix for training set... ") 
 		X_treino, y_treino, indice_invertido = criar_dataset(ofertas_treino, classes) 
 
 		print("Training classifier with %d sentences" %bloco_treino) 
@@ -225,7 +221,7 @@ def treinar_classificador ():
 	else: 
 		print("Training classifier with %d sentences" %bloco_treino) 
 		for i in range(1000): 
-			print ("Process at sentence #%d" %(i*batch)) 
+			print ("Train at sentence #%d" %(i*batch)) 
 			k1, k2 = batch * i, batch * (i+1) 
 			if k2-k1 > 1:
 				X_treino, y_treino, indice_invertido = criar_dataset(ofertas_treino[k1:k2], classes) 
@@ -236,7 +232,7 @@ def treinar_classificador ():
 	batch = bloco_teste//1000 
 
 	if batch == 0: 
-		print("Generating bow matrix for testing set... ") 
+		print("Generating w2v matrix for testing set... ") 
 		X_teste, y_teste, indice_invertido = criar_dataset(ofertas_teste, classes) 
 		
 		print("Testing classifier with %d sentences" %bloco_teste) 
@@ -246,7 +242,7 @@ def treinar_classificador ():
 		y_pred = [] 
 		y_teste = [] 
 		for i in range(1000): 
-			print ("Process at sentence #%d" %(i*batch)) 
+			print ("Test at sentence #%d" %(i*batch)) 
 			k1, k2 = batch * i, batch * (i+1) 
 			if k2-k1 > 1:
 				X_teste, y, indice_invertido = criar_dataset(ofertas_teste[k1:k2], classes) 
@@ -275,7 +271,8 @@ def treinar_classificador ():
 A partir de um conjunto de dados de entrada, executa um teste 
 e retorna a acurácia média. 
 
-@return accuracy_score Acurácia média do treino 
+@return acuracia Acurácia média do treino 
+@return f1_macro F1 medida (macro) do resultado 
 
 """ 
 def testar_classificador(): 
@@ -312,12 +309,11 @@ def testar_classificador():
 
 	print("Computing statistics... ") 
 	acuracia = accuracy_score(y, y_pred) 
-	f1_micro = f1_score(y, y_pred, average="micro") 
 	f1_macro = f1_score(y, y_pred, average="macro") 
 
-	escrever_estatisticas(acuracia, f1_micro, f1_macro) 
+	escrever_estatisticas(acuracia, f1_macro) 
 
-	return (acuracia, f1_micro, f1_macro) 
+	return (acuracia, f1_macro) 
 
 if __name__ == "__main__": 
 
@@ -340,7 +336,4 @@ if __name__ == "__main__":
 		joblib.dump(classificador, path_classificador) 
 	else:
 		classificador = joblib.load(path_classificador) 
-		acuracia, micro, macro = testar_classificador() 
-		print("Mean accuracy: %.2f" %(acuracia*100)) 
-		print("F1 score micro: %.2f" %(micro*100)) 
-		print("F1 score macro: %.2f" %(macro*100)) 
+		acuracia, macro = testar_classificador() 
