@@ -135,7 +135,6 @@ def criar_dataset (ofertas, classes, vocabulario):
 
 	linha = 0 
 	for oferta in ofertas: 
-		# if linha % 10000 == 0: print ("Process at sentence #%d" %linha)
 		campos = oferta.strip().split('\t') 
 		try:
 			classe = classes[campos[0]] 
@@ -143,12 +142,8 @@ def criar_dataset (ofertas, classes, vocabulario):
 		except: 
 			pass 		
 		
-		features = gerar_features(descricao=campos[2], primeiro_token=True) 
-		
 		features = gerar_features(descricao=campos[2], bigramas=True, primeiro_token=True, categoria_loja=campos[3], preco=campos[4], nome_loja=campos[5]) 
-		
 		tokens = features.strip().split() 
-		
 		for palavra in tokens: 
 			try: 
 				coluna = vocabulario[palavra] 
@@ -190,7 +185,7 @@ def plotar_matriz_confusao (cm, title="Matriz de confusão", cmap=plt.cm.jet):
 	plt.ylabel('Gabarito') 
 	plt.xlabel('Predito') 
 	plt.gcf().subplots_adjust(bottom=0.15) 
-	plt.savefig(graph + "matriz_de_confusao.png") 
+	plt.savefig(graph + "matriz_de_confusao_features.png") 
 
 """
 @brief Escreve estatísticas da execução 
@@ -201,9 +196,37 @@ def plotar_matriz_confusao (cm, title="Matriz de confusão", cmap=plt.cm.jet):
 @param tamaho_teste Tamanho do conjunto de teste 
 @param acuracia Acurácia média do treino 
 """
-def escrever_estatisticas (acuracia, macro): 
+def escrever_estatisticas (limiar, acuracia, macro): 
 	with open(stats, 'a') as estatisticas: 
-		estatisticas.write("%.2f\t%.2f\n" %(acuracia*100, macro*100)) 
+		estatisticas.write("%.2f\t%.2f\t%.2f\n" %(limiar*100, acuracia*100, macro*100)) 
+
+"""
+@brief Calcula a confiança do algoritmo
+
+A partir de um limiar de confiança, verifica a probabilidade, para cada entrada do conjuto de testes, 
+se a probabilidade de a classe indica pelo algoritmo é maior ou igual a este limiar. Com base nisso, 
+são calculadas a acurácia e a medida F1 para os resultados retornados. 
+
+@param X Conjunto de teste
+@param y Gabarito da classificação
+@param pred Predito da classificação
+@param limiar Limiar de confiança
+@return acurácia Acurácia do resultado 
+@return f1 macro F1 medida (macro) do resultado 
+"""
+def calcular_confianca(X, y, pred, limiar):
+	probs = classificador.predict_proba(X) 
+
+	m = [] 
+	for idx in range(probs.shape[0]): 
+		classe = pred[idx] 
+		if probs[idx, classe] >= limiar: 
+			m.append(i) 
+
+	acuracia = accuracy_score(y[m], pred[m]) 
+	f1_macro = f1_score(y[m], pred[m], average="macro") 
+
+	return (acuracia, f1_macro) 
 
 """
 @brief Executa o treino do classificador 
@@ -272,7 +295,7 @@ def treinar_classificador ():
 	f1_macro = f1_score(y_teste, y_predict, average="macro") 
 
 	matriz_de_confusao = obter_matriz_confusao(y_teste, y_predict) 
-	# plotar_matriz_confusao(matriz_de_confusao) 
+	plotar_matriz_confusao(matriz_de_confusao) 
 
 	escrever_estatisticas(acuracia, f1_macro) 
 
@@ -284,7 +307,7 @@ def treinar_classificador ():
 A partir de um conjunto de dados de entrada, executa um teste 
 e retorna a acurácia média. 
 
-@return accuracy_score Acurácia média do treino 
+@return acuracia Acurácia média do treino 
 
 """ 
 def testar_classificador(): 
@@ -300,18 +323,18 @@ def testar_classificador():
 	classes = mapear_classes(ofertas) 
 
 	print("Generating bow matrix... ") 
-	X, y, indice_invertido = criar_dataset(ofertas, classes, vocabulario) 
+	X, y, indice_invertido = criar_dataset(ofertas, classes, vocabulario) 	
 
 	print("Executing prediction... ") 
-	y_pred = classificador.predict(X) 
+	y_pred = classificador.predict(X) 	
 
 	matriz_de_confusao = obter_matriz_confusao(y, y_pred) 
-	plotar_matriz_confusao(matriz_de_confusao) 
+	plotar_matriz_confusao(matriz_de_confusao) 	
 
 	acuracia = accuracy_score(y, y_pred) 
-	f1_macro = f1_score(y_teste, y_pred, average="macro") 
+	f1_macro = f1_score(y, y_pred, average="macro") 
 
-	escrever_estatisticas(acuracia, f1_macro) 
+	escrever_estatisticas(limiar, acuracia, f1_macro) 
 
 	return acuracia 
 
@@ -320,11 +343,12 @@ if __name__ == "__main__":
 	path = "../../dataset/files/" 
 
 	if len(sys.argv) < 4: 
-		print("args: <treino> <teste> <classificador>") 
+		print("args: <treino> <teste> <classificador> <limiar>") 
 		sys.exit(1) 
-	treino, teste, caminho_do_classificador = sys.argv[1:4] 
+	treino, teste, caminho_do_classificador, limiar = sys.argv[1:5] 
+	limiar = float(limiar) 
 
-	stats = "../stats/stats_bow.txt" 
+	stats = "../stats/estatisticas.txt" 
 	graph = "../graphics/" 
 
 	if not os.path.exists(caminho_do_classificador): 
